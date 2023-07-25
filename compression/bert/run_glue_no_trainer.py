@@ -13,6 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """ Finetuning a 🤗 Transformers model for sequence classification on GLUE."""
+import os
+import sys
+sys.path.append("/home/olyas/LightSpeed/")
 import argparse
 import logging
 import math
@@ -47,6 +50,7 @@ from transformers import (
 from transformers.file_utils import get_full_repo_name
 from transformers.utils.versions import require_version
 from huggingface_transformer.modeling_bert import BertForSequenceClassification
+sys.path.append("/home/olyas/LightSpeed/")
 import deepspeed
 from deepspeed.compression.compress import init_compression, redundancy_clean
 
@@ -162,6 +166,11 @@ def parse_args():
     parser.add_argument("--distill_method", type=str, default=None, help="knowledage distillation")   
     parser.add_argument(
         "--local_rank",
+        type=int,
+        default=-1,
+        help="local_rank for distributed training on gpus")
+    parser.add_argument(
+        "--local-rank",
         type=int,
         default=-1,
         help="local_rank for distributed training on gpus")
