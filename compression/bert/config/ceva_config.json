@@ -1,6 +1,6 @@
 {
-    "train_batch_size": 128,
-    "train_micro_batch_size_per_gpu": 128,
+    "train_batch_size": 64,
+    "train_micro_batch_size_per_gpu": 64,
     "steps_per_print": 200,
     "zero_optimization": {
       "stage": 0
@@ -79,7 +79,7 @@
     "shared_parameters":{
       "enabled": true,
       "schedule_offset": 30,
-       "schedule_offset_end": 20000,
+      "schedule_offset_end": 20000,
       "method": "l1"
     },
     "different_groups":{
