@@ -56,7 +56,7 @@ from transformers.modeling_utils import (
 )
 from transformers.utils import logging
 from transformers.models.bert.configuration_bert import BertConfig
-
+from deepspeed.compression.basic_layer import AsymQuantizer, LinearLayer_Compress, SymQuantizer
 
 logger = logging.get_logger(__name__)
 
@@ -223,6 +223,33 @@ class BertEmbeddings(nn.Module):
         embeddings = self.dropout(embeddings)
         return embeddings
 
+def set_id_to_qat_layers(model, full_name):
+    """
+    Sets id to all optimized linear layers
+    usage: set_id_to_qat_layers(model, "")
+    """
+
+    for name, layer in model._modules.items():
+        new_name = name
+        if full_name != "":
+            new_name = full_name + "." + name
+        if isinstance(layer, (LinearLayer_Compress, )):
+            setattr(layer, "scope_name", new_name)
+        set_id_to_qat_layers(layer, new_name)
+
+def get_all_bits(model, scale_dict):
+    """
+    get dictionary of bits for all compressed linear layers
+    """
+
+    for name, layer in model._modules.items():
+
+        if isinstance(layer, ( LinearLayer_Compress)):
+            layer.add_quant_bits(scale_dict)
+        get_all_bits(layer, scale_dict)
+
+
+
 
 class BertSelfAttention(nn.Module):
     def __init__(self, config, position_embedding_type=None):
@@ -250,11 +277,23 @@ class BertSelfAttention(nn.Module):
             self.distance_embedding = nn.Embedding(2 * config.max_position_embeddings - 1, self.attention_head_size)
 
         self.is_decoder = config.is_decoder
+        self.quantizer_key = SymQuantizer.apply
+        self.quantizer_query = SymQuantizer.apply
+        self.quantizer_value = AsymQuantizer.apply
+        self.quantizer_atten = AsymQuantizer.apply
+
 
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
+
+    def add_quant_bits(self, quant_dict):
+        quant_dict[self.scope_name] = {"key_layer_bits":4, "key_layer_groups":"tbd",
+                                       "quary_layer_bits":4, "quary_layer_groups":1,
+                                       "attension_score_bits":8, "quary_layer_groups":1,
+                                       "value_layer_bits":4, "quary_layer_groups":98000}
+
 
     def forward(
         self,
@@ -304,6 +343,17 @@ class BertSelfAttention(nn.Module):
             past_key_value = (key_layer, value_layer)
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
+        #dynamyc assym 4 bit
+        if type(self.query) == LinearLayer_Compress:
+           #logger.info("Quantizing key query!!!")
+
+            num_groups = query_layer.numel() // query_layer.size(-1)
+            query_layer = self.quantizer_query(query_layer, 4, None, None, 1)
+            num_groups = key_layer.numel() // key_layer.size(-1)
+            key_layer = self.quantizer_key(key_layer,4,None,None,num_groups)
+
+
+
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
 
         if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
@@ -337,6 +387,15 @@ class BertSelfAttention(nn.Module):
         # Mask heads if we want to
         if head_mask is not None:
             attention_probs = attention_probs * head_mask
+
+        if type(self.query) == LinearLayer_Compress:
+            # logger.info("Quantizing key query!!!")
+
+            num_groups = attention_probs.numel() // attention_probs.size(-1)
+            attention_probs = self.quantizer_atten(attention_probs, 8, None, None, 1)
+            #print((attention_probs- attention_probs_q).abs().max())
+            num_groups = value_layer.numel() // value_layer.size(-1)
+            value_layer = self.quantizer_value(value_layer, 4, None, None, num_groups)
 
         context_layer = torch.matmul(attention_probs, value_layer)
 
