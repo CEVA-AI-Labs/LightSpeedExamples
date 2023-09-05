@@ -307,7 +307,7 @@ def save_checkpoint_and_config(args, model, config, tokenizer, ds_config=None):
             if args.deepspeed:
                 new_json_path = os.path.join(output_dir, "ds_config.json")
                 with open(new_json_path, 'w') as f:
-                    json.dump(ds_config, f)
+                    json.dump(ds_config, f, indent=4)
 
 
 def save_clean_best_model(args, print_rank_0,  model, tokenizer, config, redundancy_clean, eval_dataloader, mm_eval_dataloader, device, is_regression, previous_best, best_dev_acc, ds_config=None):
@@ -364,5 +364,5 @@ def save_clean_best_model(args, print_rank_0,  model, tokenizer, config, redunda
             if args.deepspeed:
                 new_json_path = os.path.join(args.output_dir, "ds_config.json")
                 with open(new_json_path, 'w') as f:
-                    json.dump(ds_config, f)        
+                    json.dump(ds_config, f, indent=4)        
         

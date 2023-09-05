@@ -8,7 +8,7 @@ import time
 import deepspeed
 import argparse
 from transformers import pipeline
-from deepspeed.accelerator import get_accelerator
+from accelerator import get_accelerator
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", "-m", type=str, help="hf model name")
@@ -68,11 +68,13 @@ mask = pipe.tokenizer.mask_token
 
 br = pipe(f"Hello I'm a {mask} model")
 if args.deepspeed:
-    pipe.model = deepspeed.init_inference(pipe.model,
-                                          dtype=dtype,
-                                          tensor_parallel={"tp_size": 1},
-                                          replace_with_kernel_inject=args.kernel_inject,
-                                          enable_cuda_graph=args.graphs)
+    pipe.model = deepspeed.init_inference(
+        pipe.model,
+        dtype=dtype,
+        tensor_parallel={"tp_size": 1},
+        replace_with_kernel_inject=args.kernel_inject,
+        enable_cuda_graph=args.graphs,
+    )
     pipe.model.profile_model_time()
 
 responses = []
