@@ -45,7 +45,10 @@ from transformers import (
 )
 from transformers.file_utils import get_full_repo_name
 from transformers.utils.versions import require_version
-from huggingface_transformer.modeling_bert import BertForSequenceClassification
+from huggingface_transformer.modeling_bert import (
+    BertForSequenceClassification,
+    set_id_to_qat_layers,
+)
 import deepspeed
 from deepspeed.compression.compress import init_compression, redundancy_clean
 
@@ -269,7 +272,7 @@ def main():
         (
             layer_reduction_enabled,
             prune_enabled,
-            quantization_enabled
+            quantization_enabled,
         ) = check_and_identify_compresssion(args, ds_config)
         args.layer_reduction_enabled = layer_reduction_enabled
     # Make one log on every process with the configuration for debugging.
@@ -531,7 +534,7 @@ def main():
     if args.task_name == "mnli":
         # Final evaluation on mismatched validation set
         mm_eval_dataset = processed_datasets["validation_mismatched"]
-        mm_eval_dataset = mm_eval_dataset.select(range(5))    # limit dataset size
+        mm_eval_dataset = mm_eval_dataset.select(range(5))  # limit dataset size
         mm_eval_sampler = SequentialSampler(mm_eval_dataset)
         mm_eval_dataloader = DataLoader(
             mm_eval_dataset,
@@ -589,9 +592,9 @@ def main():
         lr_scheduler=lr_scheduler,
         dist_init_required=True,
     )
-    
+
     # call set_id_to_qat_layers according to the api in modeling_bert
-    model.
+    set_id_to_qat_layers(model, "")
 
     if teacher_model is not None:
         teacher_model, _, _, _ = deepspeed.initialize(args=args, model=teacher_model)
@@ -644,6 +647,42 @@ def main():
         device,
         is_regression=is_regression,
     )
+
+    # create json dict for matmul outputs
+    matmul_dict = {}
+    from deepspeed.compression.basic_layer import LinearLayer_Compress
+
+    def create_matmul_dict(model, full_name=""):
+        for name, layer in model._modules.items():
+            new_name = name
+            if full_name != "":
+                new_name = full_name + "." + name
+            if isinstance(layer, (LinearLayer_Compress,)):
+                base_name = layer.scope_name.replace(".", "_")
+                matmul_dict[base_name] = {
+                    "layer_id": f"{base_name}",
+                    "bin_files": {
+                        "in_buffer_file": f"bins/{base_name}_input.bin",
+                        "out_buffer_file": f"bins/{base_name}_output.bin",
+                        "weights_buffer_file": f"bins/{base_name}_weight.bin",
+                        "bias_buffer_file": f"bins/{base_name}_bias.bin",
+                    },
+                    "sf_files": {
+                        "in_sf_file": f"sf/{base_name}_input_sf.txt",
+                        "out_sf_file": f"sf/{base_name}_output_sf.txt",
+                        "weight_sf_file": f"sf/{base_name}_weight_sf.txt",
+                        "bias_sf_file": f"sf/{base_name}_bias_sf.txt",
+                    },
+                }
+            create_matmul_dict(layer, new_name)
+
+    create_matmul_dict(model)
+    model_name = os.path.basename(args.model_name_or_path).replace("-", "_")
+    with open(
+        f"out/{model_name}_output_files.json", "w", encoding="utf-8"
+    ) as json_file:
+        json.dump(matmul_dict, json_file, indent=4)
+
     current_result, _, _, _ = arrange_output(
         args.task_name, out, previous_best, best_dev_acc
     )
