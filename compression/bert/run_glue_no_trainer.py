@@ -49,10 +49,13 @@ from huggingface_transformer.modeling_bert import (
     BertForSequenceClassification,
     set_id_to_qat_layers,
 )
+from transformers import RobertaForSequenceClassification, RobertaTokenizer
 import deepspeed
 from deepspeed.compression.compress import init_compression, redundancy_clean
 
 from util import *
+
+from deepspeed.compression.utils import global_data_dumper
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +284,8 @@ def main():
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO,
     )
+    model_name = os.path.basename(args.model_name_or_path).replace("-", "_")
+    global_data_dumper.set_out_folder_path(model_name)
 
     # Setup logging, we only want one process per machine to log things on the screen.
     # accelerator.is_local_main_process is only True for one process per machine.
@@ -369,6 +374,7 @@ def main():
             "keep_number_layer"
         ]  # <==========================================here we assume there is an "num_hidden_layers" argument
 
+    # Bert-base
     tokenizer = AutoTokenizer.from_pretrained(
         args.model_name_or_path, use_fast=not args.use_slow_tokenizer
     )
@@ -377,6 +383,15 @@ def main():
         from_tf=bool(".ckpt" in args.model_name_or_path),
         config=config,
     )
+    # RoBERTa
+    # args.model_name_or_path = "./out/roberta_for_sequence/"
+    # tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+    # model = RobertaForSequenceClassification.from_pretrained(
+    #     args.model_name_or_path,
+    #     # from_tf=bool(".ckpt" in args.model_name_or_path),
+    #     config=config,
+    # )
+
     model.to(device)
     teacher_model = None
     #### load teacher models
@@ -598,6 +613,7 @@ def main():
 
     if teacher_model is not None:
         teacher_model, _, _, _ = deepspeed.initialize(args=args, model=teacher_model)
+        set_id_to_qat_layers(teacher_model, "")
 
     print_rank_0("***** Running training *****")
     print_rank_0(f"  Num examples = {len(train_dataset)}")
@@ -649,17 +665,25 @@ def main():
     )
 
     # create json dict for matmul outputs
-    matmul_dict = {}
+    npm_dumps_dict = {}
     from deepspeed.compression.basic_layer import LinearLayer_Compress
+    from huggingface_transformer.modeling_bert import (
+        BertSelfAttention,
+        BertSoftmax,
+        BertLayerNorm,
+    )
 
     def create_matmul_dict(model, full_name=""):
         for name, layer in model._modules.items():
             new_name = name
             if full_name != "":
                 new_name = full_name + "." + name
-            if isinstance(layer, (LinearLayer_Compress,)):
+            if isinstance(
+                layer,
+                (LinearLayer_Compress, BertSelfAttention, BertSoftmax, BertLayerNorm),
+            ):
                 base_name = layer.scope_name.replace(".", "_")
-                matmul_dict[base_name] = {
+                matmul_dict = {
                     "layer_id": f"{base_name}",
                     "bin_files": {
                         "in_buffer_file": f"bins/{base_name}_input.bin",
@@ -674,14 +698,43 @@ def main():
                         "bias_sf_file": f"sf/{base_name}_bias_sf.txt",
                     },
                 }
+                softmax_dict = {
+                    "layer_id": f"{base_name}",
+                    "bin_files": {
+                        "input_t1": f"bins/{base_name}_input_t1.bin",
+                        "sigmas_t8": f"bins/{base_name}_sigmas_t8.bin",
+                    },
+                    "sf_files": {
+                        "input_t1": f"sf/{base_name}_input_t1.txt",
+                        "sigmas_t8": f"sf/{base_name}_sigmas_t8.txt",
+                    },
+                }
+                layer_norm_dict = {
+                    "layer_id": f"{base_name}",
+                    "bin_files": {
+                        "var_t1": f"bins/{base_name}_layer_norm_var_t10.bin",
+                        "layer_norm_one_over_squared_root_var_t12": f"bins/{base_name}_layer_norm_one_over_squared_root_var_t12.bin",
+                    },
+                    "sf_files": {
+                        "var_t1": f"sf/{base_name}_layer_norm_var_t10.txt",
+                        "layer_norm_one_over_squared_root_var_t12": f"sf/{base_name}_layer_norm_one_over_squared_root_var_t12.txt",
+                    },
+                }
+                if "softmax" in base_name:
+                    npm_dumps_dict[base_name] = softmax_dict
+                elif "layer_norm" in base_name:
+                    npm_dumps_dict[base_name] = layer_norm_dict
+                else:
+                    npm_dumps_dict[base_name] = matmul_dict
             create_matmul_dict(layer, new_name)
 
     create_matmul_dict(model)
-    model_name = os.path.basename(args.model_name_or_path).replace("-", "_")
     with open(
-        f"out/{model_name}_output_files.json", "w", encoding="utf-8"
+        f"{global_data_dumper.main_out_folder}/{model_name}_output_files.json",
+        "w",
+        encoding="utf-8",
     ) as json_file:
-        json.dump(matmul_dict, json_file, indent=4)
+        json.dump(npm_dumps_dict, json_file, indent=4)
 
     current_result, _, _, _ = arrange_output(
         args.task_name, out, previous_best, best_dev_acc
