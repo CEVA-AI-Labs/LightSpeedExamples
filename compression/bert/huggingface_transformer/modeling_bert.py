@@ -310,6 +310,19 @@ class BertLayerNorm(nn.Module):
         @return: torch.Tensor result
         """
         # Calculate mean and variance for the specified dimensions
+        # calculate quantization parameters
+        (
+            input_scale,
+            input_zp,
+            input_quantized,
+        ) = GeneralQuantizer.calc_quantization_params(data_buffer=input, num_bits=16)
+        global_data_dumper.dump_quantization_data(
+            self.scope_name,
+            input_scale,
+            input_zp,
+            input_quantized,
+            "layer_norm_input_t2",
+        )
         mean = input.mean(
             dim=tuple(range(-len(self.normalized_shape), 0)), keepdim=True
         )

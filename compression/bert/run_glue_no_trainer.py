@@ -712,17 +712,19 @@ def main():
                 layer_norm_dict = {
                     "layer_id": f"{base_name}",
                     "bin_files": {
-                        "var_t1": f"bins/{base_name}_layer_norm_var_t10.bin",
+                        "input_t2": f"bins/{base_name}_input_t2.bin",
+                        "var_t10": f"bins/{base_name}_layer_norm_var_t10.bin",
                         "layer_norm_one_over_squared_root_var_t12": f"bins/{base_name}_layer_norm_one_over_squared_root_var_t12.bin",
                     },
                     "sf_files": {
-                        "var_t1": f"sf/{base_name}_layer_norm_var_t10.txt",
+                        "input_t2": f"sf/{base_name}_input_t2.txt",
+                        "var_t10": f"sf/{base_name}_layer_norm_var_t10.txt",
                         "layer_norm_one_over_squared_root_var_t12": f"sf/{base_name}_layer_norm_one_over_squared_root_var_t12.txt",
                     },
                 }
                 if "softmax" in base_name:
                     npm_dumps_dict[base_name] = softmax_dict
-                elif "layer_norm" in base_name:
+                elif "LayerNorm" in base_name:
                     npm_dumps_dict[base_name] = layer_norm_dict
                 else:
                     npm_dumps_dict[base_name] = matmul_dict
